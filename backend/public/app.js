@@ -80,3 +80,34 @@ document.getElementById('btnMe')?.addEventListener('click', async () => {
     setOutput({ ok: false, action: 'me', error: err.message });
   }
 });
+
+function setMessagesOutput(data) {
+  const pre = document.getElementById('messagesOutput');
+  pre.textContent =
+    typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+}
+
+document.getElementById('btnLoad')?.addEventListener('click', async () => {
+  try {
+    setMessagesOutput('Загружаю сообщения...');
+    const data = await request('/api/messages', 'GET');
+    setMessagesOutput(data.length ? data : 'Пока сообщений нет.');
+  } catch (err) {
+    setMessagesOutput({ ok: false, action: 'load', error: err.message });
+  }
+});
+
+document.getElementById('btnSend')?.addEventListener('click', async () => {
+  try {
+    const input = document.getElementById('msg');
+    const content = input.value;
+
+    setMessagesOutput('Отправляю сообщение...');
+    const data = await request('/api/messages', 'POST', { content });
+
+    input.value = '';
+    setMessagesOutput({ ok: true, action: 'send', data });
+  } catch (err) {
+    setMessagesOutput({ ok: false, action: 'send', error: err.message });
+  }
+});

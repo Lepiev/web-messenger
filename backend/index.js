@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 // подключаем библиотеки
 const express = require('express');
 const https = require('https');
@@ -6,14 +8,31 @@ const path = require('path');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-// создаем приложение и задаем порт по умолчанию
+// создаем приложение
 const app = express();
-const PORT = 3001;
 
-const JWT_SECRET = 'very-very-and-one-more-very-secret'; // потом надо его добавить в .env
+// порт и секретный код
+const PORT = Number(process.env.PORT) || 3001;
+const JWT_SECRET = process.env.JWT_SECRET;
 
-// временное хранилище пользователей (потом заменим на БД)
-const users = [];
+if (!JWT_SECRET) {
+  throw new Error('Создай локально файл .env и напиши туда JWT_SECRET=<рандомный ключ>');
+}
+
+
+// база пользователей и сообщений
+
+const path_to_db = path.join(__dirname, 'data', 'db.json');
+// читаем базу данных
+async function readDb() {
+  const raw = await fs.promises.readFile(path_to_db, 'utf-8');
+  return JSON.parse(raw);
+}
+// записываем в базу
+async function writeDb(db) {
+  await fs.promises.writeFile(path_to_db, JSON.stringify(db, null, 2), 'utf-8');
+}
+
 
 const SALT_ROUNDS = 10;
 
@@ -31,7 +50,7 @@ const authRequired = (req, res, next) => {
       return res.status(403).json({ message: 'Invalid or expired token' });
     }
     // если всё ок, пропускает запрос дальше, прикрепив данные к req.user
-    req.user = user; 
+    req.user = { id: user.id, login: user.login }; 
     next();
   });
 };
@@ -39,7 +58,7 @@ const authRequired = (req, res, next) => {
 // включаем поддержку JSON в теле запросов (req.body)
 app.use(express.json());
 
-// раздаем статические файлы (минимальный фронтенд)
+// раздаем статические файлы
 app.use('/static', express.static(path.join(__dirname, 'public')));
 
 // читаем SSL-сертификаты
@@ -55,6 +74,34 @@ app.get('/', (req, res) => {
 app.get('/ui', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+app.get('/api/messages', authRequired, async (req, res) => {
+  const db = await readDb();
+  res.json(db.messages);
+});
+
+app.post('/api/messages', authRequired, async (req, res) => {
+  const { content } = req.body;
+
+  if (!content || !content.trim()) {
+    return res.status(400).json({ message: 'message id empty' });
+  }
+
+  const db = await readDb();
+
+  const message = {
+    id: db.messages.length + 1,
+    content: content.trim(),
+    createdAt: new Date().toISOString(),
+    user: req.user, // { id, login }
+  };
+
+  db.messages.push(message);
+  await writeDb(db);
+
+  res.status(201).json(message);
+});
+
 
 app.get('/app/ping', (req, res) =>{
     res.json({
@@ -83,10 +130,14 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ message: 'login and password required' });
   }
 
+  const db = await readDb();
+  const users = db.users;
+
   const check = users.find(u => u.login === login);
   if (check) {
     return res.status(400).json({ message: 'User already exists' });
   }
+
 
   // хешируем пароль
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
@@ -98,11 +149,14 @@ app.post('/api/auth/register', async (req, res) => {
   };
 
   users.push(newUser);
-
+  await writeDb(db);
+  
+  
+  // генерим токен
   const token = jwt.sign(
     {id: newUser.id, login: newUser.login},
     JWT_SECRET,
-    {expiresIn: '1h'}
+    {expiresIn: '1h'} //время жизни токена
   );
 
   res.status(201).json({
@@ -119,6 +173,10 @@ app.post('/api/auth/login', async (req, res) => {
   if(!login || !password){
     return res.status(400).json({message: "login and password required"});
   }
+
+  const db = await readDb();
+  const users = db.users;
+
 
   // ищем пользователя по логину
   const user = users.find(u => u.login === login);
@@ -150,10 +208,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.get('/api/auth/me', authRequired, (req, res) => {
-  res.json({
-    message: 'Authorized access',
-    user: req.user // эти данные пришли из токена
-  });
+  res.json(req.user);
 });
 
 https.createServer(httpsOptions, app).listen(PORT, () => {
